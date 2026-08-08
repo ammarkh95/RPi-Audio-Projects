@@ -1,0 +1,6 @@
+ai-edge-litert
+numpy
+scipy
+librosa
+soundfile
+matplotlib
