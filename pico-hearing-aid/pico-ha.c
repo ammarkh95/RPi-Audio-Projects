@@ -101,62 +101,8 @@ typedef struct {
 
 // Tracks the real ADC midpoint, which may drift away from exactly 2048.
 static float adc_bias_est = 2048.0f;
-
 static float dc_x1 = 0.0f;
 static float dc_y1 = 0.0f;
-
-// ------------------------------------------------------------
-// Utility functions
-// ------------------------------------------------------------
-
-static inline float clampf_fast(float x, float lo, float hi) {
-    if (x < lo) return lo;
-    if (x > hi) return hi;
-    return x;
-}
-
-static inline float biquad_process(float x, MB_Biquad *s) {
-    float y = s->b0 * x
-            + s->b1 * s->x1
-            + s->b2 * s->x2
-            - s->a1 * s->y1
-            - s->a2 * s->y2;
-
-    s->x2 = s->x1;
-    s->x1 = x;
-    s->y2 = s->y1;
-    s->y1 = y;
-
-#if DSP_FLUSH_DENORMALS
-    if (fabsf(y) < 1.0e-12f) {
-        y = 0.0f;
-    }
-#endif
-
-    return y;
-}
-
-// ------------------------------------------------------------
-// DC and input cleanup
-// ------------------------------------------------------------
-
-static inline float remove_adc_bias_and_dc(float raw_adc) {
-    // Very slow tracker: follows DC/bias drift but not normal speech.
-    const float bias_alpha = 0.000045f;
-    adc_bias_est += bias_alpha * (raw_adc - adc_bias_est);
-
-    float x = raw_adc - adc_bias_est;
-
-    // First-order DC blocker around 20 Hz.
-    const float dc_r = 0.99715f;
-    float y = x - dc_x1 + dc_r * dc_y1;
-
-    dc_x1 = x;
-    dc_y1 = y;
-
-    return y;
-}
-
 
 // ------------------------------------------------------------
 // Input cleanup filter
@@ -270,7 +216,6 @@ static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {
     }
 };
 
-
 typedef struct {
     float bass_slider;       // 1.0 = flat, >1.0 = boost, <1.0 = cut
     float middle_slider;     // 1.0 = flat, >1.0 = boost, <1.0 = cut
@@ -296,6 +241,58 @@ static const MB_BandDynamics base_dyn[MB_NUM_BANDS] = {
     { .env=0, .gain_smooth=1, .noise_floor=5.0f,  .min_gain=0.80f, .threshold=100.0f, .ratio=3.5f, .makeup_gain=2.50f }, 
     { .env=0, .gain_smooth=1, .noise_floor=4.0f,  .min_gain=0.75f, .threshold=100.0f, .ratio=3.0f, .makeup_gain=2.20f }  
 };
+
+// ------------------------------------------------------------
+// Utility functions
+// ------------------------------------------------------------
+
+static inline float clampf_fast(float x, float lo, float hi) {
+    if (x < lo) return lo;
+    if (x > hi) return hi;
+    return x;
+}
+
+static inline float biquad_process(float x, MB_Biquad *s) {
+    float y = s->b0 * x
+            + s->b1 * s->x1
+            + s->b2 * s->x2
+            - s->a1 * s->y1
+            - s->a2 * s->y2;
+
+    s->x2 = s->x1;
+    s->x1 = x;
+    s->y2 = s->y1;
+    s->y1 = y;
+
+#if DSP_FLUSH_DENORMALS
+    if (fabsf(y) < 1.0e-12f) {
+        y = 0.0f;
+    }
+#endif
+
+    return y;
+}
+
+// ------------------------------------------------------------
+// DC and input cleanup
+// ------------------------------------------------------------
+
+static inline float remove_adc_bias_and_dc(float raw_adc) {
+    // Very slow tracker: follows DC/bias drift but not normal speech.
+    const float bias_alpha = 0.000045f;
+    adc_bias_est += bias_alpha * (raw_adc - adc_bias_est);
+
+    float x = raw_adc - adc_bias_est;
+
+    // First-order DC blocker around 20 Hz.
+    const float dc_r = 0.99715f;
+    float y = x - dc_x1 + dc_r * dc_y1;
+
+    dc_x1 = x;
+    dc_y1 = y;
+
+    return y;
+}
 
 // ------------------------------------------------------------
 // Per-band expander + WDRC compressor
@@ -399,6 +396,7 @@ void process_block(uint16_t *adc_in, uint32_t *i2s_out) {
 // --- STATIC TUNING CONFIGURATION ---
 // Tweak these values, recompile, and listen.
 // ============================================================
+
 // Applies the static UI settings to your live DSP WDRC variables
 void apply_static_tuning() {
     // Clamp UI values to safe bounds before doing any WDRC math
@@ -426,9 +424,11 @@ void apply_static_tuning() {
         mb_dyn[0].min_gain *= 0.9f;     
     }
 }
+
 // ============================================================
 // DMA IRQ Handler (IRQ1, leaves USB on IRQ0 alone)
 // ============================================================
+
 void __isr dma_irq_handler() {
     // --- ADC channels ---
     if (dma_hw->intr & (1u << adc_dma_a)) {
@@ -459,9 +459,11 @@ void __isr dma_irq_handler() {
         dma_channel_set_read_addr(i2s_dma_b, i2sBufB, false);
     }
 }
+
 // ============================================================
 // ADC + DMA Ping-Pong Setup
 // ============================================================
+
 void init_adc_dma() {
     adc_init();
     adc_gpio_init(ADC_PIN);
@@ -493,9 +495,11 @@ void init_adc_dma() {
     dma_channel_set_irq1_enabled(adc_dma_a, true);
     dma_channel_set_irq1_enabled(adc_dma_b, true);
 }
+
 // ============================================================
 // I2S PIO Setup (your original code, unchanged)
 // ============================================================
+
 void init_i2s() {
     smMCLK = pio_claim_unused_sm(pio0, true);
     uint offsetMCLK = pio_add_program(pio0, &i2s_master_clock_program);
@@ -528,9 +532,11 @@ void init_i2s() {
 
     pio_enable_sm_mask_in_sync(pio0, (1u << smMCLK) | (1u << smCLK));
 }
+
 // ============================================================
 // I2S DMA Ping-Pong Setup
 // ============================================================
+
 void init_i2s_dma() {
     i2s_dma_a = dma_claim_unused_channel(true);
     i2s_dma_b = dma_claim_unused_channel(true);
@@ -558,9 +564,11 @@ void init_i2s_dma() {
     irq_set_exclusive_handler(DMA_IRQ_1, dma_irq_handler);
     irq_set_enabled(DMA_IRQ_1, true);
 }
+
 // ============================================================
 // Main
 // ============================================================
+
 int main() {
     stdio_init_all();
 
