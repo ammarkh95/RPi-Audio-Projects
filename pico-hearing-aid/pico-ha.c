@@ -237,22 +237,22 @@ static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {
 #define USER_SLIDER_MAX  ( 5.0f)
 
 // Frequency sliders.
-static float user_bass   = -1.0f;   // low-band loudness / warmth
-static float user_middle = 3.0f;   // speech body / voice presence
-static float user_treble = 2.0f;   // consonant clarity / brightness
+static float user_bass   = 0.0f;   // low-band loudness / warmth
+static float user_middle = 0.0f;   // speech body / voice presence
+static float user_treble = 0.0f;   // consonant clarity / brightness
 
 // Overall loudness slider.
-static float user_volume = 2.0f;
+static float user_volume = 0.0f;
 
 // Noise control slider.
 // Higher = more noise reduction, but weaker far/quiet sounds.
-static float user_noise_reduction = -3.0f;
+static float user_noise_reduction = 0.0f;
 
 // Sound character slider.
 // -5 = comfort/smoother
 //  0 = balanced
 // +5 = clarity/brighter speech
-static float user_clarity = 2.0f;
+static float user_clarity = 0.0f;
 
 typedef struct {
     float low_mix;
@@ -402,7 +402,7 @@ static inline float process_band_dynamics(float x, MB_BandDynamics *d) {
 // ------------------------------------------------------------
 
 static inline float soft_limiter(float x) {
-    const float limit = 1600.0f; // Start limiting gracefully BEFORE the 2047 ceiling
+    const float limit = 1900.0f; // Start limiting gracefully BEFORE the 2047 ceiling
     const float max_out = 2047.0f;
     
     x = clampf_fast(x, -4096.0f, 4096.0f);
