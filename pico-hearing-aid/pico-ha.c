@@ -187,6 +187,7 @@ static MB_Biquad high_smooth = {
 // ------------------------------------------------------------
 
 static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {
+    // Low band: below ~500 Hz
     {
         .env = 0.0f,
         .gain_smooth = 1.0f,
@@ -196,6 +197,8 @@ static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {
         .ratio = 2.5f,
         .makeup_gain = 0.80f
     },
+
+    // Mid band: ~500 Hz to ~3 kHz
     {
         .env = 0.0f,
         .gain_smooth = 1.0f,
@@ -205,6 +208,8 @@ static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {
         .ratio = 2.2f,
         .makeup_gain = 2.40f
     },
+
+    // High band: above ~3 kHz
     {
         .env = 0.0f,
         .gain_smooth = 1.0f,
@@ -216,30 +221,71 @@ static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {
     }
 };
 
+// ============================================================
+// --- USER TUNING CONTROLS: STATIC PROOF OF CONCEPT ---
+// ============================================================
+//
+// Slider range:
+//   -5 = less
+//    0 = neutral
+//   +5 = more
+//
+// These are static for now. Later they can be updated from BLE,
+// buttons, UART commands, saved presets, or a phone app.
+
+#define USER_SLIDER_MIN  (-5.0f)
+#define USER_SLIDER_MAX  ( 5.0f)
+
+// Frequency sliders.
+static float user_bass   = -1.0f;   // low-band loudness / warmth
+static float user_middle = 3.0f;   // speech body / voice presence
+static float user_treble = 2.0f;   // consonant clarity / brightness
+
+// Overall loudness slider.
+static float user_volume = 2.0f;
+
+// Noise control slider.
+// Higher = more noise reduction, but weaker far/quiet sounds.
+static float user_noise_reduction = -3.0f;
+
+// Sound character slider.
+// -5 = comfort/smoother
+//  0 = balanced
+// +5 = clarity/brighter speech
+static float user_clarity = 2.0f;
+
 typedef struct {
-    float bass_slider;       // 1.0 = flat, >1.0 = boost, <1.0 = cut
-    float middle_slider;     // 1.0 = flat, >1.0 = boost, <1.0 = cut
-    float treble_slider;     // 1.0 = flat, >1.0 = boost, <1.0 = cut
-    float volume_slider;     // Master volume multiplier (e.g., 0.5 to 2.0)
-    float noise_reduction;   // 0.0 = off, 1.0 = max suppression
-    bool  clarity_mode;      // true = Clarity, false = Comfort
-} HearingAidUI;
+    float low_mix;
+    float mid_mix;
+    float high_mix;
+    float output_gain;
 
-// ---> EDIT YOUR SLIDERS HERE <---
-static const HearingAidUI MY_TUNING = {
-    .bass_slider = 1.2f,     // Keep some cinematic warmth
-    .middle_slider = 1.4f,   
-    .treble_slider = 1.1f,
-    .volume_slider = 1.0f,
-    .noise_reduction = 0.3f, // Let the quiet Foley/ambient movie sounds through
-    .clarity_mode = false
-};
+    float low_noise_floor;
+    float mid_noise_floor;
+    float high_noise_floor;
 
-static const MB_BandDynamics base_dyn[MB_NUM_BANDS] = {
-    // Note the very low thresholds (100-120) and high ratios (2.5 - 3.5) across the board
-    { .env=0, .gain_smooth=1, .noise_floor=6.0f,  .min_gain=0.70f, .threshold=120.0f, .ratio=2.5f, .makeup_gain=1.80f }, 
-    { .env=0, .gain_smooth=1, .noise_floor=5.0f,  .min_gain=0.80f, .threshold=100.0f, .ratio=3.5f, .makeup_gain=2.50f }, 
-    { .env=0, .gain_smooth=1, .noise_floor=4.0f,  .min_gain=0.75f, .threshold=100.0f, .ratio=3.0f, .makeup_gain=2.20f }  
+    float low_min_gain;
+    float mid_min_gain;
+    float high_min_gain;
+
+    float high_smooth_mix;
+} UserTuningRuntime;
+
+static UserTuningRuntime user_rt = {
+    .low_mix = 0.85f,
+    .mid_mix = 1.00f,
+    .high_mix = 0.95f,
+    .output_gain = 1.00f,
+
+    .low_noise_floor = 10.0f,
+    .mid_noise_floor = 6.0f,
+    .high_noise_floor = 5.0f,
+
+    .low_min_gain = 0.25f,
+    .mid_min_gain = 0.45f,
+    .high_min_gain = 0.35f,
+
+    .high_smooth_mix = 1.0f
 };
 
 // ------------------------------------------------------------
@@ -271,6 +317,24 @@ static inline float biquad_process(float x, MB_Biquad *s) {
 #endif
 
     return y;
+}
+
+static inline float slider_norm(float v) {
+    // Convert -5..+5 to -1..+1.
+    v = clampf_fast(v, USER_SLIDER_MIN, USER_SLIDER_MAX);
+    return v / 5.0f;
+}
+
+static inline float db_to_linear(float db) {
+    // 20*log10(gain) convention for audio amplitude.
+    return powf(10.0f, db / 20.0f);
+}
+
+static inline float slider_to_gain_db(float slider, float max_db) {
+    // Example:
+    // slider = +5 and max_db = 6 gives +6 dB.
+    // slider = -5 and max_db = 6 gives -6 dB.
+    return slider_norm(slider) * max_db;
 }
 
 // ------------------------------------------------------------
@@ -314,7 +378,7 @@ static inline float process_band_dynamics(float x, MB_BandDynamics *d) {
     if (d->env < d->noise_floor) {
         float r = d->env / d->noise_floor;
         r = clampf_fast(r, 0.0f, 1.0f);
-        expander_gain = d->min_gain + (1.0f - d->min_gain) * r * r;
+        expander_gain = d->min_gain + (1.0f - d->min_gain) * r;
     }
 
     // WDRC: apply makeup gain, then reduce gain above the threshold.
@@ -378,9 +442,15 @@ void process_block(uint16_t *adc_in, uint32_t *i2s_out) {
         mid  = process_band_dynamics(mid,  &mb_dyn[1]);
         high = process_band_dynamics(high, &mb_dyn[2]);
 
-        // Recombine with phase correction AND Master Volume
-        // Notice the minus sign on the 'mid' band
-        float y = (0.85f * low - 1.00f * mid + 0.95f * high) * MY_TUNING.volume_slider;
+        // Recombine bands using user-adjustable tone controls.
+        float y = user_rt.low_mix  * low
+                + user_rt.mid_mix  * mid
+                + user_rt.high_mix * high;
+
+        // Apply user volume after band recombination.
+        y *= user_rt.output_gain;
+
+        // Protect the DAC/output path.
         y = soft_limiter(y);
         y = clampf_fast(y, -2048.0f, 2047.0f);
 
@@ -389,40 +459,83 @@ void process_block(uint16_t *adc_in, uint32_t *i2s_out) {
 
         i2s_out[2 * i + 0] = (uint32_t)sample32;
         i2s_out[2 * i + 1] = (uint32_t)sample32;
+
     }
 }
 
-// ============================================================
-// --- STATIC TUNING CONFIGURATION ---
-// Tweak these values, recompile, and listen.
-// ============================================================
+static void update_user_tuning(void) {
+    float bass_n   = slider_norm(user_bass);
+    float middle_n = slider_norm(user_middle);
+    float treble_n = slider_norm(user_treble);
+    float volume_n = slider_norm(user_volume);
+    float noise_n  = slider_norm(user_noise_reduction);
+    float clarity_n = slider_norm(user_clarity);
 
-// Applies the static UI settings to your live DSP WDRC variables
-void apply_static_tuning() {
-    // Clamp UI values to safe bounds before doing any WDRC math
-    float safe_nr = clampf_fast(MY_TUNING.noise_reduction, 0.0f, 1.0f);
-    
-    for (int i = 0; i < MB_NUM_BANDS; i++) {
-        mb_dyn[i].threshold = base_dyn[i].threshold;
-        mb_dyn[i].ratio = base_dyn[i].ratio;
-        
-        mb_dyn[i].noise_floor = base_dyn[i].noise_floor * (0.5f + safe_nr);
-        mb_dyn[i].min_gain = 1.0f - (safe_nr * (1.0f - base_dyn[i].min_gain));
-    }
+    // ------------------------------------------------------------
+    // Frequency sliders
+    // ------------------------------------------------------------
+    //
+    // Bass gets a smaller range to avoid rumble/feedback.
+    // Middle gets useful range because speech body lives there.
+    // Treble gets moderate range because too much creates hiss.
+    float bass_db   = bass_n   * 4.0f;
+    float middle_db = middle_n * 5.0f;
+    float treble_db = treble_n * 5.0f;
 
-    // Apply EQ (Remove volume_slider from here)
-    mb_dyn[0].makeup_gain = base_dyn[0].makeup_gain * MY_TUNING.bass_slider;
-    mb_dyn[1].makeup_gain = base_dyn[1].makeup_gain * MY_TUNING.middle_slider;
-    mb_dyn[2].makeup_gain = base_dyn[2].makeup_gain * MY_TUNING.treble_slider;
+    // Clarity tilts response toward speech brightness.
+    // Comfort tilts away from sharpness.
+    middle_db += clarity_n * 1.5f;
+    treble_db += clarity_n * 2.5f;
+    bass_db   -= clarity_n * 1.0f;
 
-    // Apply Clarity/Comfort Macro-adjustments
-    if (MY_TUNING.clarity_mode) {
-        mb_dyn[1].makeup_gain *= 1.15f; 
-        mb_dyn[1].threshold *= 0.8f;    
-    } else {
-        mb_dyn[2].makeup_gain *= 0.85f;
-        mb_dyn[0].min_gain *= 0.9f;     
-    }
+    user_rt.low_mix  = 0.85f * db_to_linear(bass_db);
+    user_rt.mid_mix  = 1.00f * db_to_linear(middle_db);
+    user_rt.high_mix = 0.95f * db_to_linear(treble_db);
+
+    // ------------------------------------------------------------
+    // Volume slider
+    // ------------------------------------------------------------
+    //
+    // +/-8 dB total output gain.
+    // Keep this after band recombination.
+    float volume_db = volume_n * 8.0f;
+    user_rt.output_gain = db_to_linear(volume_db);
+
+    // ------------------------------------------------------------
+    // Noise reduction slider
+    // ------------------------------------------------------------
+    //
+    // Higher noise reduction:
+    //   - raises noise_floor
+    //   - lowers min_gain
+    //
+    // Lower noise reduction:
+    //   - opens up quiet/far sounds
+    //   - allows more room noise
+    float nr = noise_n;
+
+    user_rt.low_noise_floor  = 10.0f + nr * 8.0f;
+    user_rt.mid_noise_floor  =  6.0f + nr * 6.0f;
+    user_rt.high_noise_floor =  5.0f + nr * 5.0f;
+
+    user_rt.low_min_gain  = 0.25f - nr * 0.10f;
+    user_rt.mid_min_gain  = 0.45f - nr * 0.18f;
+    user_rt.high_min_gain = 0.35f - nr * 0.15f;
+
+    user_rt.low_min_gain  = clampf_fast(user_rt.low_min_gain,  0.08f, 0.60f);
+    user_rt.mid_min_gain  = clampf_fast(user_rt.mid_min_gain,  0.15f, 0.75f);
+    user_rt.high_min_gain = clampf_fast(user_rt.high_min_gain, 0.10f, 0.65f);
+
+    // ------------------------------------------------------------
+    // Write runtime tuning into dynamics table
+    // ------------------------------------------------------------
+    mb_dyn[0].noise_floor = user_rt.low_noise_floor;
+    mb_dyn[1].noise_floor = user_rt.mid_noise_floor;
+    mb_dyn[2].noise_floor = user_rt.high_noise_floor;
+
+    mb_dyn[0].min_gain = user_rt.low_min_gain;
+    mb_dyn[1].min_gain = user_rt.mid_min_gain;
+    mb_dyn[2].min_gain = user_rt.high_min_gain;
 }
 
 // ============================================================
@@ -583,13 +696,14 @@ int main() {
     init_adc_dma();
     init_i2s_dma();
 
-// ---> APPLY STATIC TUNING BEFORE STARTING HARDWARE <---
-    apply_static_tuning();
+    // Apply static user tuning before audio starts.
+    update_user_tuning();
 
     // Start everything
     adc_run(true);
     dma_channel_start(adc_dma_a);
     dma_channel_start(i2s_dma_a);
+
 
     while (true) {
         if (adc_buffer_ready && i2s_need_fill) {
