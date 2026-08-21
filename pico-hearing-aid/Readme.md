@@ -1,9 +1,10 @@
 # Pico 2 Hearing Aid DSP (3-Band WDRC)
 
-A real-time, zero-latency digital signal processing (DSP) hearing aid pipeline built for the Raspberry Pi Pico 2. This project implements a 3-Band Wide Dynamic Range Compressor (WDRC) utilizing the Pico's hardware Floating-Point Unit (FPU), Direct Memory Access (DMA), and Programmable I/O (PIO) to deliver continuous audio.
+A real-time, ultra-low latency digital signal processing (DSP) hearing aid pipeline built for the Raspberry Pi Pico 2. This project implements a 3-Band Wide Dynamic Range Compressor (WDRC) utilizing the Pico's hardware Floating-Point Unit (FPU), Direct Memory Access (DMA), and Programmable I/O (PIO) to deliver continuous, gapless audio.
 
 ## Features
-* **Zero Latency I/O:** Uses DMA ping-pong buffering to read from the ADC and write to the I2S DAC simultaneously while the CPU processes 128-sample blocks.
+* **Ultra-Low Latency:** Uses DMA ping-pong buffering to process 128-sample blocks at 44.1 kHz, resulting in an imperceptible ~2.9ms round-trip block latency.
+* **Power-Optimized Core:** The ARM core enters a low-power sleep state (`__wfi()`) while waiting for DMA transfers, maximizing battery life for portable/wearable applications.
 * **Smart WDRC Decoupling:** User EQ slider adjustments fold directly into the compressor makeup gains and inversely scale the thresholds, guaranteeing that tone adjustments never accidentally drive the signal into clipping.
 * **4th-Order Linkwitz-Riley (LR4) Crossover:** Cascaded biquad filters ensure all three bands sum perfectly in-phase with a flat magnitude response. The low band utilizes a bespoke alignment path to perfectly time-match the phase delay of the higher bands.
 * **Rational Soft Clipper:** Gracefully rounds off loud transients before they hit the digital ceiling, preventing harsh integer overflow distortion.
@@ -14,7 +15,7 @@ A real-time, zero-latency digital signal processing (DSP) hearing aid pipeline b
 ## Project Architecture
 
 ### Hardware Mapping
-This project is configured for a MAX9814 analog microphone and a standard I2S DAC.
+This project is configured for a MAX9814 analog microphone and a standard I2S DAC (such as the PMOD I2S).
 
 | Peripheral | Component | Pin | Notes |
 | :--- | :--- | :--- | :--- |
