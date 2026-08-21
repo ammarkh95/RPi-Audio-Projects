@@ -120,18 +120,19 @@ static MB_Biquad input_hpf = {
 };
 
 // ------------------------------------------------------------
-// Cascaded 3-band analysis split
+// LR4 3-band analysis split
 // ------------------------------------------------------------
 //
-// Split structure:
-//   low  = LP500(x)
-//   rest = HP500(x)
-//   mid  = LP3000(rest)
-//   high = HP3000(rest)
+// LR4 = two identical 2nd-order Butterworth filters in series.
+// Default recombination should be same polarity.
 //
-// This avoids deriving the mid band by subtracting phase-shifted filters.
+// Split:
+//   low  = LR4 low-pass 500 Hz
+//   rest = LR4 high-pass 500 Hz
+//   mid  = LR4 low-pass 3000 Hz applied to rest
+//   high = LR4 high-pass 3000 Hz applied to rest
 
-static MB_Biquad split_lp_500 = {
+static MB_Biquad split_lp_500_a = {
     .b0 =  0.00120740f,
     .b1 =  0.00241480f,
     .b2 =  0.00120740f,
@@ -141,7 +142,17 @@ static MB_Biquad split_lp_500 = {
     .y1 = 0.0f, .y2 = 0.0f
 };
 
-static MB_Biquad split_hp_500 = {
+static MB_Biquad split_lp_500_b = {
+    .b0 =  0.00120740f,
+    .b1 =  0.00241480f,
+    .b2 =  0.00120740f,
+    .a1 = -1.89931218f,
+    .a2 =  0.90414178f,
+    .x1 = 0.0f, .x2 = 0.0f,
+    .y1 = 0.0f, .y2 = 0.0f
+};
+
+static MB_Biquad split_hp_500_a = {
     .b0 =  0.95172821f,
     .b1 = -1.90345642f,
     .b2 =  0.95172821f,
@@ -151,7 +162,17 @@ static MB_Biquad split_hp_500 = {
     .y1 = 0.0f, .y2 = 0.0f
 };
 
-static MB_Biquad split_lp_3000 = {
+static MB_Biquad split_hp_500_b = {
+    .b0 =  0.95172821f,
+    .b1 = -1.90345642f,
+    .b2 =  0.95172821f,
+    .a1 = -1.90112625f,
+    .a2 =  0.90578659f,
+    .x1 = 0.0f, .x2 = 0.0f,
+    .y1 = 0.0f, .y2 = 0.0f
+};
+
+static MB_Biquad split_lp_3000_a = {
     .b0 =  0.03357181f,
     .b1 =  0.06714362f,
     .b2 =  0.03357181f,
@@ -161,7 +182,17 @@ static MB_Biquad split_lp_3000 = {
     .y1 = 0.0f, .y2 = 0.0f
 };
 
-static MB_Biquad split_hp_3000 = {
+static MB_Biquad split_lp_3000_b = {
+    .b0 =  0.03357181f,
+    .b1 =  0.06714362f,
+    .b2 =  0.03357181f,
+    .a1 = -1.41898265f,
+    .a2 =  0.56108439f,
+    .x1 = 0.0f, .x2 = 0.0f,
+    .y1 = 0.0f, .y2 = 0.0f
+};
+
+static MB_Biquad split_hp_3000_a = {
     .b0 =  0.74501676f,
     .b1 = -1.49003352f,
     .b2 =  0.74501676f,
@@ -171,23 +202,72 @@ static MB_Biquad split_hp_3000 = {
     .y1 = 0.0f, .y2 = 0.0f
 };
 
-// Gentle high-band smoothing to avoid over-emphasizing MAX9814 hiss.
-static MB_Biquad high_smooth = {
-    .b0 =  0.22136462f,
-    .b1 =  0.44272924f,
-    .b2 =  0.22136462f,
-    .a1 = -0.30756636f,
-    .a2 =  0.19302484f,
+static MB_Biquad split_hp_3000_b = {
+    .b0 =  0.74501676f,
+    .b1 = -1.49003352f,
+    .b2 =  0.74501676f,
+    .a1 = -1.41898265f,
+    .a2 =  0.56108439f,
     .x1 = 0.0f, .x2 = 0.0f,
     .y1 = 0.0f, .y2 = 0.0f
 };
 
 // ------------------------------------------------------------
+// Low-band phase alignment through the 3000 Hz LR4 split
+// ------------------------------------------------------------
+//
+// In a cascaded 3-way LR4 split, mid/high pass through the 3000 Hz
+// crossover. Low does not. This alignment path passes low through
+// an equivalent LP3000+HP3000 summed LR4 path, approximating an
+// all-pass delay/phase match without changing low-band magnitude.
+//
+// These must use separate states from the real mid/high split.
+
+static MB_Biquad align_lp_3000_a = {
+    .b0 =  0.03357181f,
+    .b1 =  0.06714362f,
+    .b2 =  0.03357181f,
+    .a1 = -1.41898265f,
+    .a2 =  0.56108439f,
+    .x1 = 0.0f, .x2 = 0.0f,
+    .y1 = 0.0f, .y2 = 0.0f
+};
+
+static MB_Biquad align_lp_3000_b = {
+    .b0 =  0.03357181f,
+    .b1 =  0.06714362f,
+    .b2 =  0.03357181f,
+    .a1 = -1.41898265f,
+    .a2 =  0.56108439f,
+    .x1 = 0.0f, .x2 = 0.0f,
+    .y1 = 0.0f, .y2 = 0.0f
+};
+
+static MB_Biquad align_hp_3000_a = {
+    .b0 =  0.74501676f,
+    .b1 = -1.49003352f,
+    .b2 =  0.74501676f,
+    .a1 = -1.41898265f,
+    .a2 =  0.56108439f,
+    .x1 = 0.0f, .x2 = 0.0f,
+    .y1 = 0.0f, .y2 = 0.0f
+};
+
+static MB_Biquad align_hp_3000_b = {
+    .b0 =  0.74501676f,
+    .b1 = -1.49003352f,
+    .b2 =  0.74501676f,
+    .a1 = -1.41898265f,
+    .a2 =  0.56108439f,
+    .x1 = 0.0f, .x2 = 0.0f,
+    .y1 = 0.0f, .y2 = 0.0f
+};
+// ------------------------------------------------------------
 // Per-band dynamics
 // ------------------------------------------------------------
 
-static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {
-    // Low band: below ~500 Hz
+static const MB_BandDynamics base_dyn[MB_NUM_BANDS] = {
+    // Low band
     {
         .env = 0.0f,
         .gain_smooth = 1.0f,
@@ -198,7 +278,7 @@ static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {
         .makeup_gain = 0.80f
     },
 
-    // Mid band: ~500 Hz to ~3 kHz
+    // Mid band
     {
         .env = 0.0f,
         .gain_smooth = 1.0f,
@@ -209,7 +289,7 @@ static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {
         .makeup_gain = 2.40f
     },
 
-    // High band: above ~3 kHz
+    // High band
     {
         .env = 0.0f,
         .gain_smooth = 1.0f,
@@ -220,6 +300,8 @@ static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {
         .makeup_gain = 2.60f
     }
 };
+
+static MB_BandDynamics mb_dyn[MB_NUM_BANDS] = {0};
 
 // ============================================================
 // --- USER TUNING CONTROLS: STATIC PROOF OF CONCEPT ---
@@ -242,11 +324,11 @@ static float user_middle = 0.0f;   // speech body / voice presence
 static float user_treble = 0.0f;   // consonant clarity / brightness
 
 // Overall loudness slider.
-static float user_volume = 0.0f;
+static float user_volume = 1.0f;
 
 // Noise control slider.
 // Higher = more noise reduction, but weaker far/quiet sounds.
-static float user_noise_reduction = 0.0f;
+static float user_noise_reduction = 5.0f;
 
 // Sound character slider.
 // -5 = comfort/smoother
@@ -268,7 +350,6 @@ typedef struct {
     float mid_min_gain;
     float high_min_gain;
 
-    float high_smooth_mix;
 } UserTuningRuntime;
 
 static UserTuningRuntime user_rt = {
@@ -284,8 +365,6 @@ static UserTuningRuntime user_rt = {
     .low_min_gain = 0.25f,
     .mid_min_gain = 0.45f,
     .high_min_gain = 0.35f,
-
-    .high_smooth_mix = 1.0f
 };
 
 // ------------------------------------------------------------
@@ -337,6 +416,22 @@ static inline float slider_to_gain_db(float slider, float max_db) {
     return slider_norm(slider) * max_db;
 }
 
+static inline float align_low_through_3000_split(float low) {
+    float low_lp = biquad_process(low, &align_lp_3000_a);
+    low_lp = biquad_process(low_lp, &align_lp_3000_b);
+
+    float low_hp = biquad_process(low, &align_hp_3000_a);
+    low_hp = biquad_process(low_hp, &align_hp_3000_b);
+
+    return low_lp + low_hp;
+}
+
+void init_adc_frontend(void) {
+    adc_init();
+    adc_gpio_init(ADC_PIN);
+    adc_select_input(0);
+}
+
 // ------------------------------------------------------------
 // DC and input cleanup
 // ------------------------------------------------------------
@@ -356,6 +451,22 @@ static inline float remove_adc_bias_and_dc(float raw_adc) {
     dc_y1 = y;
 
     return y;
+}
+
+static void calibrate_adc_bias(void) {
+    const int n = 512;
+    uint32_t sum = 0;
+
+    adc_select_input(0);
+
+    for (int i = 0; i < n; i++) {
+        sum += adc_read() & 0x0FFFu;
+        sleep_us(25);
+    }
+
+    adc_bias_est = (float)sum / (float)n;
+    dc_x1 = 0.0f;
+    dc_y1 = 0.0f;
 }
 
 // ------------------------------------------------------------
@@ -425,17 +536,25 @@ void process_block(uint16_t *adc_in, uint32_t *i2s_out) {
     for (int i = 0; i < ADC_BUF_LEN; i++) {
         // Raw 12-bit ADC sample.
         float x = (float)(adc_in[i] & 0x0FFFu);
-
         // Remove microphone bias/DC and low-frequency rumble.
         x = remove_adc_bias_and_dc(x);
         x = biquad_process(x, &input_hpf);
 
-        // Split into low, mid, and high speech bands.
-        float low  = biquad_process(x, &split_lp_500);
-        float rest = biquad_process(x, &split_hp_500);
-        float mid  = biquad_process(rest, &split_lp_3000);
-        float high = biquad_process(rest, &split_hp_3000);
-        high = biquad_process(high, &high_smooth);
+        // LR4 split: each branch uses two identical Butterworth biquads.
+        float low = biquad_process(x, &split_lp_500_a);
+        low = biquad_process(low, &split_lp_500_b);
+
+        // Align low band with the 3000 Hz split phase/delay used by mid/high.
+        low = align_low_through_3000_split(low);
+
+        float rest = biquad_process(x, &split_hp_500_a);
+        rest = biquad_process(rest, &split_hp_500_b);
+
+        float mid = biquad_process(rest, &split_lp_3000_a);
+        mid = biquad_process(mid, &split_lp_3000_b);
+
+        float high = biquad_process(rest, &split_hp_3000_a);
+        high = biquad_process(high, &split_hp_3000_b);
 
         // Compress/expand each band independently.
         low  = process_band_dynamics(low,  &mb_dyn[0]);
@@ -464,79 +583,93 @@ void process_block(uint16_t *adc_in, uint32_t *i2s_out) {
 }
 
 static void update_user_tuning(void) {
-    float bass_n   = slider_norm(user_bass);
-    float middle_n = slider_norm(user_middle);
-    float treble_n = slider_norm(user_treble);
-    float volume_n = slider_norm(user_volume);
-    float noise_n  = slider_norm(user_noise_reduction);
+    float bass_n    = slider_norm(user_bass);
+    float middle_n  = slider_norm(user_middle);
+    float treble_n  = slider_norm(user_treble);
+    float volume_n  = slider_norm(user_volume);
+    float noise_n   = slider_norm(user_noise_reduction);
     float clarity_n = slider_norm(user_clarity);
 
+    // Preserve live envelope state if tuning changes while audio is running.
+    float old_env[MB_NUM_BANDS];
+    float old_gain_smooth[MB_NUM_BANDS];
+
+    for (int i = 0; i < MB_NUM_BANDS; i++) {
+        old_env[i] = mb_dyn[i].env;
+        old_gain_smooth[i] = mb_dyn[i].gain_smooth;
+
+        mb_dyn[i] = base_dyn[i];
+
+        mb_dyn[i].env = old_env[i];
+        mb_dyn[i].gain_smooth = old_gain_smooth[i];
+    }
+
     // ------------------------------------------------------------
-    // Frequency sliders
+    // Convert tone sliders to per-band gain in dB.
     // ------------------------------------------------------------
     //
-    // Bass gets a smaller range to avoid rumble/feedback.
-    // Middle gets useful range because speech body lives there.
-    // Treble gets moderate range because too much creates hiss.
+    // These gains are folded into compressor makeup gain, not applied
+    // after compression. Threshold scales inversely to preserve WDRC behavior.
     float bass_db   = bass_n   * 4.0f;
     float middle_db = middle_n * 5.0f;
     float treble_db = treble_n * 5.0f;
 
-    // Clarity tilts response toward speech brightness.
-    // Comfort tilts away from sharpness.
+    // Clarity/comfort tilt.
     middle_db += clarity_n * 1.5f;
     treble_db += clarity_n * 2.5f;
     bass_db   -= clarity_n * 1.0f;
 
-    user_rt.low_mix  = 0.85f * db_to_linear(bass_db);
-    user_rt.mid_mix  = 1.00f * db_to_linear(middle_db);
-    user_rt.high_mix = 0.95f * db_to_linear(treble_db);
+    float band_gain[MB_NUM_BANDS];
+
+    band_gain[0] = db_to_linear(bass_db);
+    band_gain[1] = db_to_linear(middle_db);
+    band_gain[2] = db_to_linear(treble_db);
+
+    for (int i = 0; i < MB_NUM_BANDS; i++) {
+        mb_dyn[i].makeup_gain = base_dyn[i].makeup_gain * band_gain[i];
+
+        // Inverse threshold scaling:
+        // if user boosts a band, compression starts earlier;
+        // if user cuts a band, compression starts later.
+        mb_dyn[i].threshold = base_dyn[i].threshold / band_gain[i];
+
+        mb_dyn[i].threshold = clampf_fast(mb_dyn[i].threshold, 60.0f, 600.0f);
+    }
 
     // ------------------------------------------------------------
-    // Volume slider
+    // Noise reduction slider.
     // ------------------------------------------------------------
     //
-    // +/-8 dB total output gain.
-    // Keep this after band recombination.
-    float volume_db = volume_n * 8.0f;
-    user_rt.output_gain = db_to_linear(volume_db);
-
-    // ------------------------------------------------------------
-    // Noise reduction slider
-    // ------------------------------------------------------------
-    //
-    // Higher noise reduction:
-    //   - raises noise_floor
-    //   - lowers min_gain
-    //
-    // Lower noise reduction:
-    //   - opens up quiet/far sounds
-    //   - allows more room noise
+    // Positive = stronger noise suppression.
+    // Negative = more open for quiet/far speech.
     float nr = noise_n;
 
-    user_rt.low_noise_floor  = 10.0f + nr * 8.0f;
-    user_rt.mid_noise_floor  =  6.0f + nr * 6.0f;
-    user_rt.high_noise_floor =  5.0f + nr * 5.0f;
+    mb_dyn[0].noise_floor = 10.0f + nr * 8.0f;
+    mb_dyn[1].noise_floor =  6.0f + nr * 6.0f;
+    mb_dyn[2].noise_floor =  5.0f + nr * 5.0f;
 
-    user_rt.low_min_gain  = 0.25f - nr * 0.10f;
-    user_rt.mid_min_gain  = 0.45f - nr * 0.18f;
-    user_rt.high_min_gain = 0.35f - nr * 0.15f;
+    mb_dyn[0].noise_floor = clampf_fast(mb_dyn[0].noise_floor, 2.0f, 24.0f);
+    mb_dyn[1].noise_floor = clampf_fast(mb_dyn[1].noise_floor, 1.5f, 18.0f);
+    mb_dyn[2].noise_floor = clampf_fast(mb_dyn[2].noise_floor, 1.0f, 16.0f);
 
-    user_rt.low_min_gain  = clampf_fast(user_rt.low_min_gain,  0.08f, 0.60f);
-    user_rt.mid_min_gain  = clampf_fast(user_rt.mid_min_gain,  0.15f, 0.75f);
-    user_rt.high_min_gain = clampf_fast(user_rt.high_min_gain, 0.10f, 0.65f);
+    mb_dyn[0].min_gain = clampf_fast(0.25f - nr * 0.10f, 0.08f, 0.60f);
+    mb_dyn[1].min_gain = clampf_fast(0.45f - nr * 0.18f, 0.15f, 0.75f);
+    mb_dyn[2].min_gain = clampf_fast(0.35f - nr * 0.15f, 0.10f, 0.65f);
 
     // ------------------------------------------------------------
-    // Write runtime tuning into dynamics table
+    // Volume slider remains global.
     // ------------------------------------------------------------
-    mb_dyn[0].noise_floor = user_rt.low_noise_floor;
-    mb_dyn[1].noise_floor = user_rt.mid_noise_floor;
-    mb_dyn[2].noise_floor = user_rt.high_noise_floor;
+    //
+    // Keep this moderate. Large output gain can still drive the limiter.
+    float volume_db = volume_n * 6.0f;
+    user_rt.output_gain = db_to_linear(volume_db);
 
-    mb_dyn[0].min_gain = user_rt.low_min_gain;
-    mb_dyn[1].min_gain = user_rt.mid_min_gain;
-    mb_dyn[2].min_gain = user_rt.high_min_gain;
+    // Recombination trims are no longer user EQ sliders.
+    user_rt.low_mix  = 0.85f;
+    user_rt.mid_mix  = 1.00f;
+    user_rt.high_mix = 0.95f;
 }
+
 
 // ============================================================
 // DMA IRQ Handler (IRQ1, leaves USB on IRQ0 alone)
@@ -578,10 +711,6 @@ void __isr dma_irq_handler() {
 // ============================================================
 
 void init_adc_dma() {
-    adc_init();
-    adc_gpio_init(ADC_PIN);
-    adc_select_input(0);
-
     adc_fifo_setup(true, true, 1, false, false);
     adc_set_clkdiv((48000000.0f / SAMPLE_RATE) - 1.0f);
 
@@ -608,6 +737,7 @@ void init_adc_dma() {
     dma_channel_set_irq1_enabled(adc_dma_a, true);
     dma_channel_set_irq1_enabled(adc_dma_b, true);
 }
+
 
 // ============================================================
 // I2S PIO Setup (your original code, unchanged)
@@ -685,25 +815,31 @@ void init_i2s_dma() {
 int main() {
     stdio_init_all();
 
-    // Pre-fill I2S buffers with silence
+    // Pre-fill I2S buffers with silence.
     for (int i = 0; i < BUF_LEN; i++) {
         i2sBufA[i] = 0;
         i2sBufB[i] = 0;
     }
 
-    // initialize i2s and DMAs for ADC and I2S
     init_i2s();
+
+    // ADC hardware only. Do this before adc_read() calibration.
+    init_adc_frontend();
+
+    // Calibrate before FIFO/DMA setup to avoid FIFO/DMA state corruption.
+    calibrate_adc_bias();
+
+    // Now configure DMA/FIFO paths.
     init_adc_dma();
     init_i2s_dma();
 
     // Apply static user tuning before audio starts.
     update_user_tuning();
 
-    // Start everything
+    // Start everything.
     adc_run(true);
     dma_channel_start(adc_dma_a);
     dma_channel_start(i2s_dma_a);
-
 
     while (true) {
         if (adc_buffer_ready && i2s_need_fill) {
@@ -726,7 +862,6 @@ int main() {
 
             process_block(src, dst);
         }
-
 
         tight_loop_contents();
     }
