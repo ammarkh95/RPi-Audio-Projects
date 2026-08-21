@@ -25,6 +25,50 @@ This project is configured for a MAX9814 analog microphone and a standard I2S DA
 | **I2S LRCK** | DAC Word/LR Clock | `4` | Driven by PIO |
 | **I2S DOUT** | DAC Data In | `5` | Driven by PIO |
 
+
+ ### Firmware Loop Architecture                                                                                                                                                                                           
+                                                                                                                                                                                                                          
+ ```                                                                                                                                                                                                                      
+                          +-------------------+                                                                                                                                                                           
+                          | Hardware Init     |                                                                                                                                                                           
+                          |  - I2S PIO Setup  |                                                                                                                                                                           
+                          |  - ADC Setup      |                                                                                                                                                                           
+                          |  - Calibrate Bias |                                                                                                                                                                           
+                          |  - Setup DMA IRQs |                                                                                                                                                                           
+                          +---------+---------+                                                                                                                                                                           
+                                    |                                                                                                                                                                                     
+                                    v                                                                                                                                                                                     
+                          +-------------------+                                                                                                                                                                           
+                          | Enable Sampling   |                                                                                                                                                                           
+                          |  - Start ADC      |                                                                                                                                                                           
+                          |  - Start DMA      |                                                                                                                                                                           
+                          +---------+---------+                                                                                                                                                                           
+                                    |                                                                                                                                                                                     
+                                    v                                                                                                                                                                                     
+                        +-----------------------+                                                                                                                                                                         
+                        | Main Loop             |                                                                                                                                                                         
+                        |   while(true)         |                                                                                                                                                                         
+                        +-----------+-----------+                                                                                                                                                                         
+                                    |                                                                                                                                                                                     
+                        adc_buffer_ready && i2s_need_fill ?                                                                                                                                                               
+                          /                   \                                                                                                                                                                           
+                        YES                    NO                                                                                                                                                                         
+                        /                        \                                                                                                                                                                        
+         +----------------------------+   +-----------------------+                                                                                                                                                       
+         | 1. Critical section:       |   | tight_loop_contents() |                                                                                                                                                       
+         |    - Atomic flag check &   |   +-----------------------+                                                                                                                                                       
+         |      buffer pointer swap   |                                                                                                                                                                                   
+         | 2. process_block(src, dst):|                                                                                                                                                                                   
+         |    - DC Removal & HPF      |                                                                                                                                                                                   
+         |    - 3-Band LR4 Crossover  |                                                                                                                                                                                   
+         |    - Per-Band WDRC & Exp.  |                                                                                                                                                                                   
+         |    - Sum + Soft Limiter    |                                                                                                                                                                                   
+         |    - Stereo 32-bit Format  |                                                                                                                                                                                   
+         +----------------------------+                                                                                                                                                                                   
+ ```                                                                                                                                                                                                                      
+                                                                                                                                                                                                                         
+
+
 ### DSP Signal Flow
 The audio pipeline executes block-by-block with the following floating-point signal path:
 1. **Input Cleanup:** Raw ADC samples undergo adaptive DC bias removal and a ~100 Hz biquad high-pass filter to eliminate structural rumble.
